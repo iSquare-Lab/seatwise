@@ -143,6 +143,12 @@ func _init() -> void:
 			couples_together = couples_together and adjacent(w, members[0], members[1])
 	check(couples_together, "every couple sits side by side")
 	check(not same_table(w, w._find("Karl Lindqvist"), w._find("Henrik Weber")), "the two fathers sit at different tables")
+	var head_table: Dictionary = w.tables[0]
+	var party_at_head := true
+	for g in w.guests:
+		if g.group == "Wedding party":
+			party_at_head = party_at_head and w.seat_of(g.id).get("table", -1) == head_table.id
+	check(party_at_head, "the whole wedding party sits at the head table")
 	var groups_ok := 0
 	for t in w.tables:
 		var seen := {}

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+		<title>Seatwise · seating plans</title>
+		<meta name="description" content="Plan who sits where at weddings, dinners and events. Paste your guest list, set who sits together or apart, and let Seatwise seat everyone. Then download the seating chart. Nothing is uploaded. Made with Godot.">
+		<meta name="theme-color" content="#13161d">
+		<meta name="color-scheme" content="dark">
+		<link rel="icon" href="index.icon.png" type="image/png">
+		<style>
+html, body, #canvas {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+body {
+	color: #eef2fa;
+	background-color: #13161d;
+	overflow: hidden;
+	touch-action: none;
+	font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+#canvas {
+	display: block;
+}
+
+#canvas:focus {
+	outline: none;
+}
+
+#status {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 18px;
+	background: radial-gradient(circle at 50% 42%, #1d222c 0, #13161d 60%);
+	padding: 24px;
+	text-align: center;
+}
+
+#status svg {
+	width: 112px;
+	height: 112px;
+	filter: drop-shadow(0 0 24px rgb(79 124 255 / 0.3));
+}
+
+#status h1 {
+	margin: 0;
+	font-size: 34px;
+	letter-spacing: -0.01em;
+}
+
+#status-text {
+	margin: 0;
+	color: #a9b4cb;
+	font-size: 15px;
+	min-height: 1.4em;
+}
+
+#status-bar {
+	width: min(280px, 70vw);
+	height: 6px;
+	border-radius: 3px;
+	background: #262a35;
+	overflow: hidden;
+}
+
+#status-fill {
+	height: 100%;
+	width: 8%;
+	border-radius: 3px;
+	background: #3f6df2;
+	transition: width 0.2s ease-out;
+}
+
+#status-notice {
+	display: none;
+	max-width: 440px;
+	padding: 14px 16px;
+	border-radius: 12px;
+	background: #3a1d22;
+	color: #ffd9dd;
+	line-height: 1.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	#status-fill {
+		transition: none;
+	}
+}
+		</style>
+		$GODOT_HEAD_INCLUDE
+	</head>
+	<body>
+		<canvas id="canvas" aria-label="Seatwise seating plan">
+			Seatwise needs a browser that can draw on a canvas.
+		</canvas>
+
+		<noscript>
+			<p style="padding:24px">Seatwise needs JavaScript to run.</p>
+		</noscript>
+
+		<div id="status">
+			<svg viewBox="0 0 64 64" aria-hidden="true">
+				<rect width="64" height="64" rx="14" fill="#1b1f28"/><circle cx="32" cy="32" r="12" fill="#e2d6c2"/><circle cx="32" cy="11" r="6" fill="#8fb3e8"/><circle cx="50" cy="21.5" r="6" fill="#8fb3e8"/><circle cx="50" cy="42.5" r="6" fill="#f0a98c"/><circle cx="32" cy="53" r="6" fill="#f0a98c"/><circle cx="14" cy="42.5" r="6" fill="#9ed4a8"/><circle cx="14" cy="21.5" r="6" fill="#9ed4a8"/>
+			</svg>
+			<h1>Seatwise</h1>
+			<div id="status-bar" role="progressbar" aria-label="Loading Seatwise" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="status-fill"></div></div>
+			<p id="status-text" aria-live="polite">Loading Seatwise…</p>
+			<div id="status-notice" role="alert"></div>
+		</div>
+
+		<script src="$GODOT_URL"></script>
+		<script>
+const GODOT_CONFIG = $GODOT_CONFIG;
+const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+const engine = new Engine(GODOT_CONFIG);
+
+(function () {
+	const statusOverlay = document.getElementById('status');
+	const statusBar = document.getElementById('status-bar');
+	const statusFill = document.getElementById('status-fill');
+	const statusText = document.getElementById('status-text');
+	const statusNotice = document.getElementById('status-notice');
+
+	function fail(err) {
+		console.error(err);
+		const message = err instanceof Error ? err.message : (typeof err === 'string' ? err : 'Something went wrong.');
+		statusNotice.textContent = 'Seatwise could not start: ' + message + ' Reload the page to try again.';
+		statusNotice.style.display = 'block';
+		statusBar.style.display = 'none';
+		statusText.textContent = '';
+	}
+
+	const missing = Engine.getMissingFeatures({threads: GODOT_THREADS_ENABLED});
+	if (missing.length !== 0) {
+		fail('this browser lacks ' + missing.join(', ') + '.');
+		return;
+	}
+
+	let lastPercent = -1;
+	engine.startGame({
+		onProgress: function (current, total) {
+			if (current > 0 && total > 0) {
+				const percent = Math.min(100, Math.round((current / total) * 100));
+				statusFill.style.width = Math.max(8, percent) + '%';
+				statusBar.setAttribute('aria-valuenow', String(percent));
+				if (percent !== lastPercent && percent % 10 === 0) {
+					statusText.textContent = percent < 100 ? 'Loading Seatwise… ' + percent + '%' : 'Starting…';
+					lastPercent = percent;
+				}
+			}
+		},
+	}).then(function () {
+		statusOverlay.remove();
+	}, fail);
+}());
+		</script>
+	</body>
+</html>

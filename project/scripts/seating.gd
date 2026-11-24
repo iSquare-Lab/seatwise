@@ -27,6 +27,20 @@ var apart: Array[Vector2i] = []
 var _next_id := 1
 var _undo: Array[String] = []
 var _redo: Array[String] = []
+# Solver state (see improve()): packed arrays indexed by guest position, kept as members so the
+# helper methods share them by reference.
+var _sv_n := 0
+var _sv_tcount := 0
+var _sv_group := PackedInt32Array()
+var _sv_party := PackedInt32Array()
+var _sv_avoid := PackedByteArray()
+var _sv_seats: Array[PackedInt32Array] = []
+var _sv_pairs: Array[PackedInt32Array] = []
+var _sv_lonely := PackedByteArray()
+var _sv_ptc := PackedInt32Array()
+var _sv_mt := PackedInt32Array()
+var _sv_ms := PackedInt32Array()
+var _sv_costs := PackedFloat64Array()
 
 
 # ------------------------------------------------------------------ Tables
@@ -468,60 +482,107 @@ func _free_seat_near(t: Dictionary, members: Array) -> int:
 
 ## Improves the seating by swapping seats (simulated annealing). Locked guests never move.
 ## Call it repeatedly with a share of the work so the screen stays responsive; returns the score.
-func improve(steps: int, rng: RandomNumberGenerator, temperature: float) -> float:
-	var lookup := _lookup()
-	var parties := _parties()
-	var table_of := _table_of()
-	var movable: Array[Vector2i] = []
-	for ti in tables.size():
-		for si in tables[ti].seats:
-			var g: int = tables[ti].guests[si]
-			if g == 0 or not lookup[g].locked:
-				movable.append(Vector2i(ti, si))
-	if movable.size() < 2:
+## The inner loop works on packed arrays of guest indexes (not dictionaries) so it is fast in the browser.
+func improve(steps: int, rng: RandomNumberGenerator, temperature: float, exhaustive: bool = false) -> float:
+	var n := guests.size()
+	var tcount := tables.size()
+	if n < 1 or tcount < 1:
 		return score()
-	var table_costs: Array[float] = []
-	for t in tables:
-		table_costs.append(_table_cost(t, lookup))
-	for step in steps:
-		var a := movable[rng.randi() % movable.size()]
-		var b := movable[rng.randi() % movable.size()]
-		if a == b:
-			continue
-		var ga: int = tables[a.x].guests[a.y]
-		var gb: int = tables[b.x].guests[b.y]
-		if ga == gb:
-			continue
-		var touched_parties := {}
-		if ga != 0:
-			touched_parties[lookup[ga].party] = true
-		if gb != 0:
-			touched_parties[lookup[gb].party] = true
-		var before := table_costs[a.x] + (table_costs[b.x] if b.x != a.x else 0.0)
-		for p: int in touched_parties:
-			before += _party_cost(p, parties[p], table_of)
-		tables[a.x].guests[a.y] = gb
-		tables[b.x].guests[b.y] = ga
-		if ga != 0:
-			table_of[ga] = b.x
-		if gb != 0:
-			table_of[gb] = a.x
-		var cost_a := _table_cost(tables[a.x], lookup)
-		var cost_b := _table_cost(tables[b.x], lookup) if b.x != a.x else cost_a
-		var after := cost_a + (cost_b if b.x != a.x else 0.0)
-		for p: int in touched_parties:
-			after += _party_cost(p, parties[p], table_of)
-		var delta := after - before
-		if delta <= 0.0 or (temperature > 0.0 and rng.randf() < exp(-delta / temperature)):
-			table_costs[a.x] = cost_a
-			table_costs[b.x] = cost_b
+	var index := {}
+	var group := PackedInt32Array()
+	var party := PackedInt32Array()
+	var locked := PackedByteArray()
+	var group_ids := {}
+	var party_ids := {}
+	group.resize(n)
+	party.resize(n)
+	locked.resize(n)
+	for i in n:
+		var g := guests[i]
+		index[g.id] = i
+		if g.group == "":
+			group[i] = -1
 		else:
-			tables[a.x].guests[a.y] = ga
-			tables[b.x].guests[b.y] = gb
-			if ga != 0:
-				table_of[ga] = a.x
-			if gb != 0:
-				table_of[gb] = b.x
+			if not group_ids.has(g.group):
+				group_ids[g.group] = group_ids.size()
+			group[i] = group_ids[g.group]
+		if not party_ids.has(g.party):
+			party_ids[g.party] = party_ids.size()
+		party[i] = party_ids[g.party]
+		locked[i] = 1 if g.locked else 0
+	var party_count := party_ids.size()
+	var avoid := PackedByteArray()
+	avoid.resize(n * n)
+	for pair in apart:
+		if index.has(pair.x) and index.has(pair.y):
+			avoid[index[pair.x] * n + index[pair.y]] = 1
+			avoid[index[pair.y] * n + index[pair.x]] = 1
+	# seats[t] holds guest indexes, -1 for an empty seat; pairs[t] the neighbouring seat pairs, flattened.
+	var seats: Array[PackedInt32Array] = []
+	var pairs: Array[PackedInt32Array] = []
+	var lonely_ok := PackedByteArray()
+	_sv_ptc = PackedInt32Array()
+	_sv_ptc.resize(party_count * tcount)
+	var movable_t := PackedInt32Array()
+	var movable_s := PackedInt32Array()
+	for ti in tcount:
+		var t := tables[ti]
+		var row := PackedInt32Array()
+		row.resize(t.seats)
+		for si in t.seats:
+			var id: int = t.guests[si]
+			var gi: int = index.get(id, -1) if id != 0 else -1
+			row[si] = gi
+			if gi != -1:
+				_sv_ptc[party[gi] * tcount + ti] += 1
+			if gi == -1 or locked[gi] == 0:
+				movable_t.append(ti)
+				movable_s.append(si)
+		seats.append(row)
+		var flat := PackedInt32Array()
+		for p in neighbours(t):
+			flat.append(p.x)
+			flat.append(p.y)
+		pairs.append(flat)
+		lonely_ok.append(1 if t.seats <= 2 else 0)
+	var movable := movable_t.size()
+	_sv_n = n
+	_sv_tcount = tcount
+	_sv_group = group
+	_sv_party = party
+	_sv_avoid = avoid
+	_sv_seats = seats
+	_sv_pairs = pairs
+	_sv_lonely = lonely_ok
+	if movable < 2:
+		return score()
+
+	_sv_mt = movable_t
+	_sv_ms = movable_s
+	_sv_costs = PackedFloat64Array()
+	_sv_costs.resize(tcount)
+	for ti in tcount:
+		_sv_costs[ti] = _sv_table_cost(ti)
+	if exhaustive and movable <= 160:
+		# Polish: try every pair of seats, keep each swap that helps, until a full pass finds none.
+		for pass_index in 4:
+			var better := false
+			for ia in movable:
+				for ib in range(ia + 1, movable):
+					if _sv_try(ia, ib, 0.0, rng):
+						better = true
+			if not better:
+				break
+	else:
+		for step in steps:
+			var ia := rng.randi() % movable
+			var ib := rng.randi() % movable
+			if ia != ib:
+				_sv_try(ia, ib, temperature, rng)
+	for ti in tcount:
+		var row: PackedInt32Array = _sv_seats[ti]
+		for si in row.size():
+			tables[ti].guests[si] = guests[row[si]].id if row[si] != -1 else 0
 	return score()
 
 
@@ -533,6 +594,7 @@ func auto_seat(seed_value: int = 1, rounds: int = 40, steps_per_round: int = 400
 	var result := score()
 	for r in rounds:
 		result = improve(steps_per_round, rng, temperature_for(r, rounds))
+	result = improve(0, rng, 0.0, true)
 	return result
 
 
@@ -762,8 +824,8 @@ func load_example() -> void:
 	add_table("round", 8, 230, 360, "Table 1")
 	add_table("round", 8, 600, 380, "Table 2")
 	add_table("round", 8, 970, 360, "Table 3")
-	add_table("rect", 10, 400, 640, "Table 4")
-	add_table("rect", 10, 800, 640, "Table 5")
+	add_table("rect", 10, 320, 660, "Table 4")
+	add_table("rect", 10, 880, 660, "Table 5")
 	import_text("\n".join([
 		"Wedding party:",
 		"Mara & Jonas Lindqvist",
@@ -795,3 +857,106 @@ func _find(name: String) -> int:
 		if g.name == name:
 			return g.id
 	return 0
+
+
+## Throws away everything since the last checkpoint (a drag cancelled by a second finger), leaving no redo step.
+func discard_to_checkpoint() -> void:
+	if not _undo.is_empty():
+		from_json(_undo.pop_back())
+
+
+func _sv_table_cost(ti: int) -> float:
+	var row: PackedInt32Array = _sv_seats[ti]
+	var n := _sv_n
+	var cost := 0.0
+	var seated := 0
+	var size := row.size()
+	for i in size:
+		var a := row[i]
+		if a == -1:
+			continue
+		seated += 1
+		var ga := _sv_group[a]
+		var base := a * n
+		for j in range(i + 1, size):
+			var b := row[j]
+			if b == -1:
+				continue
+			if _sv_avoid[base + b] == 1:
+				cost += COST_APART
+			var gb := _sv_group[b]
+			if ga != -1 and gb != -1:
+				cost += -BONUS_SAME_GROUP if ga == gb else COST_MIXED_GROUP
+	var flat: PackedInt32Array = _sv_pairs[ti]
+	for k in range(0, flat.size(), 2):
+		var x := row[flat[k]]
+		var y := row[flat[k + 1]]
+		if x != -1 and y != -1 and _sv_party[x] == _sv_party[y]:
+			cost -= BONUS_PARTY_NEIGHBOUR
+	if seated == 1 and _sv_lonely[ti] == 0:
+		cost += COST_LONELY
+	return cost
+
+
+func _sv_party_cost(p: int) -> float:
+	var used := 0
+	var base := p * _sv_tcount
+	for ti in _sv_tcount:
+		if _sv_ptc[base + ti] > 0:
+			used += 1
+	return COST_PARTY_SPLIT * maxi(0, used - 1)
+
+
+## Swaps two movable seats when that lowers the score (or, while hot, sometimes when it does not).
+## Returns true when the swap made the plan strictly better.
+func _sv_try(ia: int, ib: int, temperature: float, rng: RandomNumberGenerator) -> bool:
+	var tcount := _sv_tcount
+	var ta := _sv_mt[ia]
+	var sa := _sv_ms[ia]
+	var tb := _sv_mt[ib]
+	var sb := _sv_ms[ib]
+	var ga: int = _sv_seats[ta][sa]
+	var gb: int = _sv_seats[tb][sb]
+	if ga == gb:
+		return false
+	var same_table := ta == tb
+	var pa := _sv_party[ga] if ga != -1 else -1
+	var pb := _sv_party[gb] if gb != -1 else -1
+	var before := _sv_costs[ta] + (0.0 if same_table else _sv_costs[tb])
+	if not same_table:
+		if pa != -1:
+			before += _sv_party_cost(pa)
+		if pb != -1 and pb != pa:
+			before += _sv_party_cost(pb)
+	_sv_seats[ta][sa] = gb
+	_sv_seats[tb][sb] = ga
+	if not same_table:
+		if pa != -1:
+			_sv_ptc[pa * tcount + ta] -= 1
+			_sv_ptc[pa * tcount + tb] += 1
+		if pb != -1:
+			_sv_ptc[pb * tcount + tb] -= 1
+			_sv_ptc[pb * tcount + ta] += 1
+	var cost_a: float = _sv_table_cost(ta)
+	var cost_b: float = cost_a if same_table else _sv_table_cost(tb)
+	var after := cost_a + (0.0 if same_table else cost_b)
+	if not same_table:
+		if pa != -1:
+			after += _sv_party_cost(pa)
+		if pb != -1 and pb != pa:
+			after += _sv_party_cost(pb)
+	var delta := after - before
+	if delta < -0.0001 or (delta <= 0.0 and temperature > 0.0) or (temperature > 0.0 and rng.randf() < exp(-delta / temperature)):
+		_sv_costs[ta] = cost_a
+		_sv_costs[tb] = cost_b
+		return delta < -0.0001
+	_sv_seats[ta][sa] = ga
+	_sv_seats[tb][sb] = gb
+	if not same_table:
+		if pa != -1:
+			_sv_ptc[pa * tcount + ta] += 1
+			_sv_ptc[pa * tcount + tb] -= 1
+		if pb != -1:
+			_sv_ptc[pb * tcount + tb] += 1
+			_sv_ptc[pb * tcount + ta] -= 1
+	return false
