@@ -1,5 +1,7 @@
 # Seatwise
 
+![Seatwise with the example wedding: 38 guests seated at six tables, every wish kept](docs/screenshot.png)
+
 Seating plans for weddings, dinners, conferences and classes, in the browser. Paste your guest list, say who
 should sit together and who should not, and press **Seat everyone**: Seatwise fills the tables for you. Then
 drag people around until it feels right, and download the chart.
