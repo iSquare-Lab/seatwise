@@ -11,6 +11,8 @@ const SEAT_RADIUS := 24.0
 const HANDLE := 13.0
 const MIN_SCALE := 0.12
 const MAX_SCALE := 4.0
+## Below this width (in pixels) fit() leaves out the room for names.
+const NARROW_WIDTH := 520.0
 
 const C_BACK := Color("13161d")
 const C_PAPER := Color("f4f1ea")
@@ -94,8 +96,9 @@ func content_rect() -> Rect2:
 	return plan_rect(seating)
 
 
-## The area every table and seat of a plan covers, in cm, with room for the names.
-static func plan_rect(plan: Seating) -> Rect2:
+## The area every table and seat of a plan covers, in cm, with room for the names around it
+## (or, with room_for_names false, just a little room past the seats).
+static func plan_rect(plan: Seating, room_for_names := true) -> Rect2:
 	if plan == null or plan.tables.is_empty():
 		return Rect2(0, 0, 800, 600)
 	var r := Rect2()
@@ -112,14 +115,17 @@ static func plan_rect(plan: Seating) -> Rect2:
 				r = Rect2(p, Vector2.ZERO)
 				first = false
 			r = r.expand(p)
-	return r.grow(SEAT_RADIUS + 75.0)
+	return r.grow(SEAT_RADIUS + (75.0 if room_for_names else 8.0))
 
 
+## Shows every table. On a narrow view (a phone) the names would not fit anyway, so it leaves no room
+## for them and fills the width with the seats, which makes the plan as large as it can be.
 func fit() -> void:
 	if seating == null or size.x < 8.0 or size.y < 8.0:
 		return
-	var area := content_rect()
-	var margin := 24.0
+	var narrow := size.x < NARROW_WIDTH and not export_mode
+	var area := plan_rect(seating, not narrow)
+	var margin := 10.0 if narrow else 24.0
 	view_scale = clampf(minf((size.x - margin * 2.0) / area.size.x, (size.y - margin * 2.0) / area.size.y), MIN_SCALE, MAX_SCALE)
 	offset = (size / 2.0 - area.get_center() * view_scale).round()
 	_follow = true
@@ -275,18 +281,7 @@ func _draw_table(t: Dictionary) -> void:
 	closed.append(screen[0])
 	draw_polyline(closed, C_ACCENT if chosen else C_TABLE_LINE, 3.0 if chosen else 1.5, true)
 	var center := to_screen(Vector2(t.x, t.y))
-	var k := text_scale
-	var top := Seating.table_size(t) * view_scale
-	var seated: int = t.guests.size() - t.guests.count(0)
-	var label_width := (top.x if t.shape == "round" else maxf(top.x, top.y)) * 0.9
-	if top.y >= 26.0 * k:
-		var name_size := roundi(15 * k)
-		while name_size > roundi(10 * k) and _font().get_string_size(t.name, HORIZONTAL_ALIGNMENT_LEFT, -1, name_size).x > label_width:
-			name_size -= 1
-		_text(t.name, center - Vector2(0, 8.0 * k), name_size, C_INK, label_width)
-		_text("%d / %d" % [seated, t.seats], center + Vector2(0, 10.0 * k), roundi(12 * k), Color(C_INK, 0.6), label_width)
-	elif top.y >= 12.0:
-		_text(t.name, center, roundi(11 * k), C_INK, label_width)
+	_draw_table_label(t)
 	var seats := Seating.seat_positions(t)
 	for i in seats.size():
 		var g: int = t.guests[i]
@@ -306,6 +301,51 @@ func _draw_table(t: Dictionary) -> void:
 		draw_circle(handle, HANDLE, Color.WHITE)
 		draw_circle(handle, HANDLE - 2.5, C_ACCENT)
 		draw_arc(handle, HANDLE * 0.45, -PI * 0.9, PI * 0.55, 12, Color.WHITE, 2.0, true)
+
+
+## The table's name and how full it is, inside the table top: on two lines when there is room, the
+## name alone (smaller) when not, and nothing when even that would spill over the edge.
+func _draw_table_label(t: Dictionary) -> void:
+	var k := text_scale
+	var center := to_screen(Vector2(t.x, t.y))
+	var count := "%d / %d" % [t.guests.size() - t.guests.count(0), t.seats]
+	var count_size := roundi(12 * k)
+	var name_size := _fitting_size(t, t.name, -8.0 * k, roundi(15 * k), roundi(10 * k))
+	if name_size > 0 and _fits_on_table(t, count, 10.0 * k, count_size):
+		_text(t.name, center - Vector2(0, 8.0 * k), name_size, C_INK)
+		_text(count, center + Vector2(0, 10.0 * k), count_size, Color(C_INK, 0.6))
+		return
+	name_size = _fitting_size(t, t.name, 0.0, roundi(14 * k), roundi(9 * k))
+	if name_size > 0:
+		_text(t.name, center, name_size, C_INK)
+
+
+## The largest font size from largest down to smallest at which a line fits on the table, or 0.
+func _fitting_size(t: Dictionary, text: String, dy: float, largest: int, smallest: int) -> int:
+	for font_size in range(largest, smallest - 1, -1):
+		if _fits_on_table(t, text, dy, font_size):
+			return font_size
+	return 0
+
+
+## True when a line of text, centred dy below the middle of the table, stays inside the table top.
+func _fits_on_table(t: Dictionary, text: String, dy: float, font_size: int) -> bool:
+	var font := _font()
+	var height := font.get_height(font_size)
+	var width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+	var top := Seating.table_size(t) * view_scale
+	# How far from the middle the line reaches, up or down.
+	var reach := absf(dy) + height / 2.0
+	if t.shape == "round":
+		var r := top.x / 2.0 - 3.0
+		return reach < r and width <= 2.0 * sqrt(r * r - reach * reach)
+	# The table's extent through its middle, across and down the screen (it may be turned).
+	var a := deg_to_rad(t.rot)
+	var c := maxf(absf(cos(a)), 0.001)
+	var s := maxf(absf(sin(a)), 0.001)
+	var across := minf(top.x / c, top.y / s)
+	var down := minf(top.x / s, top.y / c)
+	return reach <= down / 2.0 - 2.0 and width <= across - 8.0
 
 
 ## A seated guest: a coloured disc with initials. Their names are drawn afterwards, see name_labels().
