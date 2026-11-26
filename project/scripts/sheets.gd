@@ -66,6 +66,15 @@ func paste(add: Callable, read_clipboard: Callable) -> void:
 	box.add_child(Ui.label("\"Tom & Lisa Meyer\" adds a couple who sit together. \"+1\" adds a guest. A line like \"Family:\" sets the group for the lines below it.", 13, UiTheme.MUTED))
 	var buttons := [Ui.button("Cancel", close)]
 	if read_clipboard.is_valid():
+		# In the browser Godot only learns the clipboard after Ctrl+V, so the first Ctrl+V would paste
+		# what was copied before. Reading the clipboard here pastes the right text the first time.
+		text.gui_input.connect(func(event: InputEvent) -> void:
+			var key := event as InputEventKey
+			if key != null and key.pressed and key.keycode == KEY_V and (key.ctrl_pressed or key.meta_pressed) and not key.shift_pressed:
+				text.accept_event()
+				read_clipboard.call(func(pasted: String) -> void:
+					if is_instance_valid(text):
+						text.insert_text_at_caret(pasted)))
 		buttons.append(Ui.button("Paste from clipboard", func() -> void:
 			read_clipboard.call(func(pasted: String) -> void:
 				if is_instance_valid(text) and pasted != "":
