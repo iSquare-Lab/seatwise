@@ -51,6 +51,10 @@ var _gesture := false
 var _pinch_distance := 0.0
 var _pinch_center := Vector2.ZERO
 var _follow := true
+## Bumped whenever the plan may have changed (refresh, a table dragged or turned), for the name cache.
+var _plan_stamp := 0
+var _labels: Array[Dictionary] = []
+var _labels_key := []
 
 
 func _ready() -> void:
@@ -65,6 +69,7 @@ func _ready() -> void:
 func refresh() -> void:
 	if seating == null:
 		return
+	_plan_stamp += 1
 	_problem_guests.clear()
 	for p in seating.wish_problems():
 		for g: int in p.guests:
@@ -342,6 +347,15 @@ func _draw_seat_disc(p: Vector2, g: Dictionary, floating: bool, alpha: float, ta
 ## pixels. LabelLayout keeps every name clear of the seats, the tables and the other names, and leaves
 ## out the ones that do not fit. The selected guest goes first and shows their full name.
 func name_labels() -> Array[Dictionary]:
+	# Placing names is the costly part of drawing, so the result is kept until something it depends on changes.
+	var key := [_plan_stamp, view_scale, offset, size, selected_guest, text_scale, export_mode, seating]
+	if key != _labels_key:
+		_labels = _place_names()
+		_labels_key = key
+	return _labels
+
+
+func _place_names() -> Array[Dictionary]:
 	var shown: Array[Dictionary] = []
 	var k := text_scale
 	var r := SEAT_RADIUS * view_scale
@@ -350,6 +364,8 @@ func name_labels() -> Array[Dictionary]:
 	var font := _font()
 	var font_size := roundi(12 * k)
 	var max_width := r * 3.4
+	# Seats far outside the view need no names, and cannot crowd out the ones inside it.
+	var near_view := Rect2(Vector2.ZERO, size).grow(r * 4.0)
 	var items: Array[Dictionary] = []
 	var texts: Array[String] = []
 	var discs := PackedVector3Array()
@@ -368,6 +384,8 @@ func name_labels() -> Array[Dictionary]:
 		var outward := Seating.seat_outward(t)
 		for i in seats.size():
 			var p := to_screen(seats[i])
+			if not near_view.has_point(p):
+				continue
 			discs.append(Vector3(p.x, p.y, r + 1.0))
 			var id: int = t.guests[i]
 			if id == 0:
@@ -503,10 +521,12 @@ func _move(point: Vector2, relative: Vector2) -> void:
 			var delta := (point - _drag_start_point) / view_scale
 			t.x = snappedf(_drag_start.x + delta.x, 10.0)
 			t.y = snappedf(_drag_start.y + delta.y, 10.0)
+			_plan_stamp += 1
 		"rotate":
 			var t := seating.get_table(selected_table)
 			var angle := rad_to_deg((point - to_screen(Vector2(t.x, t.y))).angle()) + 90.0
 			t.rot = fposmod(angle if Input.is_key_pressed(KEY_SHIFT) else snappedf(angle, 15.0), 360.0)
+			_plan_stamp += 1
 	queue_redraw()
 
 

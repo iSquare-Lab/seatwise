@@ -65,16 +65,13 @@ func step() -> bool:
 	if _finished:
 		return false
 	if not _prepared:
-		place_unseated(plan)
-		_prepare()
-		_prepared = true
+		_ensure_prepared()
 	elif _round < rounds:
 		anneal(steps_per_round, temperature(_round))
 		_round += 1
 	else:
 		polish()
 		_finished = true
-	_write_back()
 	return not _finished
 
 
@@ -187,11 +184,20 @@ static func _free_seat_near(t: Dictionary, members: Array) -> int:
 
 # ------------------------------------------------------------------ Swapping seats
 
-## Tries `steps` random swaps at a temperature (0 keeps only swaps that help).
+## Seats everyone who waits and builds the packed state, once. Every way into the solver starts here,
+## so no order of calls can skip the guests who wait.
+func _ensure_prepared() -> void:
+	if _prepared:
+		return
+	place_unseated(plan)
+	_prepare()
+	_prepared = true
+
+
+## Tries `steps` random swaps at a temperature (0 keeps only swaps that help) and writes the result
+## into the plan.
 func anneal(steps: int, temp: float) -> void:
-	if not _prepared:
-		_prepare()
-		_prepared = true
+	_ensure_prepared()
 	var movable := _mt.size()
 	if movable < 2:
 		return
@@ -203,11 +209,10 @@ func anneal(steps: int, temp: float) -> void:
 	_write_back()
 
 
-## Tries every pair of movable seats and keeps each swap that helps, until a full pass finds none.
+## Tries every pair of movable seats and keeps each swap that helps, until a full pass finds none,
+## and writes the result into the plan.
 func polish() -> void:
-	if not _prepared:
-		_prepare()
-		_prepared = true
+	_ensure_prepared()
 	var movable := _mt.size()
 	if movable < 2 or movable > POLISH_LIMIT:
 		return

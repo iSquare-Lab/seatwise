@@ -6,6 +6,8 @@ extends RefCounted
 ## first names ("Tom & Lisa Meyer") adds a couple, and "+1" at the end adds a guest of theirs.
 
 const HEADER_WORDS := ["name", "guest", "guests", "names"]
+## The most lines one quoted cell may span before its opening quote counts as a typo.
+const MAX_ROW_LINES := 5
 
 
 ## Adds the guests of a list. Returns the ids added.
@@ -19,7 +21,7 @@ static func read(plan: Seating, text: String) -> Dictionary:
 	var full := false
 	var group := ""
 	var header_checked := false
-	for raw in text.replace("\r", "").split("\n"):
+	for raw in rows(text):
 		var line := raw.strip_edges()
 		if line == "" or line.begins_with("#"):
 			continue
@@ -43,9 +45,37 @@ static func read(plan: Seating, text: String) -> Dictionary:
 	return {"added": added, "full": full}
 
 
+## The rows of a list, one per line, except that a quoted cell with a line break in it (as a
+## spreadsheet writes it) keeps its row together, the line break read as a space. A quote that never
+## closes within MAX_ROW_LINES lines is taken as a typo, and those lines stay rows of their own.
+static func rows(text: String) -> PackedStringArray:
+	var lines := text.replace("\r", "").split("\n")
+	var out := PackedStringArray()
+	var i := 0
+	while i < lines.size():
+		var joined := lines[i]
+		var end := i
+		while _scan(joined)[1] and end + 1 < lines.size() and end - i + 1 < MAX_ROW_LINES:
+			end += 1
+			joined += " " + lines[end]
+		if _scan(joined)[1]:
+			# The quote never closes: a typo, so this line stands alone.
+			out.append(lines[i])
+			i += 1
+		else:
+			out.append(joined)
+			i = end + 1
+	return out
+
+
 ## Splits one line into cells: on tabs when it has any (a spreadsheet copy), on commas otherwise.
 ## A cell in double quotes keeps its commas, and "" inside it is one quote.
 static func split_row(line: String) -> Array[String]:
+	return _scan(line)[0]
+
+
+## Reads a line cell by cell. Returns [cells, true when a quoted cell is still open at the end].
+static func _scan(line: String) -> Array:
 	var separator := "\t" if line.contains("\t") else ","
 	var cells: Array[String] = []
 	var cell := ""
@@ -71,7 +101,7 @@ static func split_row(line: String) -> Array[String]:
 			cell += c
 		i += 1
 	cells.append(cell.strip_edges())
-	return cells
+	return [cells, quoted]
 
 
 ## Adds one line's guests: one person, a couple, and a "+1". Adds nobody when they do not all fit.
