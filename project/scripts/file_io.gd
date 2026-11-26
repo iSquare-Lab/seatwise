@@ -59,10 +59,11 @@ func download(bytes: PackedByteArray, file_name: String, mime: String) -> String
 	DirAccess.make_dir_recursive_absolute("user://exports")
 	var path := "user://exports/" + file_name
 	var out := FileAccess.open(path, FileAccess.WRITE)
-	if out == null or not out.store_buffer(bytes):
+	if out == null:
 		return "Could not save %s" % file_name
+	var ok := out.store_buffer(bytes)
 	out.close()
-	return "Saved " + ProjectSettings.globalize_path(path)
+	return ("Saved " + ProjectSettings.globalize_path(path)) if ok else "Could not save %s" % file_name
 
 
 ## Opens the browser's file picker; the file arrives through file_opened (or failed).
