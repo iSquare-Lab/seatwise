@@ -6,7 +6,9 @@ extends RefCounted
 ## when nothing fits.
 ## Pure geometry in screen pixels, so the tests check it without drawing anything.
 
-const TIERS := 3
+## How many distances out a name may try. Two keeps every name next to its own seat; a name pushed
+## further out would sit closer to another table's seats than to its own.
+const TIERS := 2
 ## Sideways nudges tried at each distance, as a share of half the label's width across its direction.
 const SHIFTS := [0.0, 1.0, -1.0]
 

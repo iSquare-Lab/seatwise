@@ -481,9 +481,9 @@ func redo() -> bool:
 func load_example() -> void:
 	clear()
 	title = "Wedding dinner (example)"
-	add_table("head", 6, 600, 110, "Head table")
+	add_table("head", 6, 600, 90, "Head table")
 	add_table("round", 8, 230, 360, "Table 1")
-	add_table("round", 8, 600, 380, "Table 2")
+	add_table("round", 8, 600, 420, "Table 2")
 	add_table("round", 8, 970, 360, "Table 3")
 	add_table("rect", 10, 320, 660, "Table 4")
 	add_table("rect", 10, 880, 660, "Table 5")
