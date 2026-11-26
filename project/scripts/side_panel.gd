@@ -4,8 +4,8 @@ extends VBoxContainer
 ## wide screens, below it on phones.
 
 ## Room kept free at the bottom of the pages, so the last rows can scroll clear of the host's round
-## return button in the bottom-right corner of the page.
-const CORNER_CLEARANCE := 56
+## return button in the bottom-right corner of the page (64 units are about 52 CSS px on a phone).
+const CORNER_CLEARANCE := 64
 
 var guests: GuestPage
 var tables: TablePage

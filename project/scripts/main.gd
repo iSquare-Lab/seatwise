@@ -14,6 +14,7 @@ var _files := FileIO.new()
 var _panel: PlanPanel
 var _view: VenueView
 var _side: SidePanel
+var _page: MarginContainer
 var _body: BoxContainer
 var _undo_button: Button
 var _redo_button: Button
@@ -52,14 +53,14 @@ func _build() -> void:
 	back.set_anchors_preset(Control.PRESET_FULL_RECT)
 	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(back)
-	var margin := MarginContainer.new()
-	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_page = MarginContainer.new()
+	_page.set_anchors_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 8)
-	add_child(margin)
+		_page.add_theme_constant_override("margin_" + side, 8)
+	add_child(_page)
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", 8)
-	margin.add_child(root)
+	_page.add_child(root)
 	root.add_child(_build_top_bar())
 	_body = BoxContainer.new()
 	_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -131,6 +132,8 @@ func _layout() -> void:
 	_laid_out = true
 	_body.vertical = not wide
 	_side.set_wide(wide, size.y)
+	# On a phone the page ends above the host's round return button in the bottom-right corner.
+	_page.add_theme_constant_override("margin_bottom", 8 if wide else SidePanel.CORNER_CLEARANCE)
 	_view.fit.call_deferred()
 
 
