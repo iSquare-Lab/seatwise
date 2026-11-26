@@ -118,6 +118,7 @@ static func list_row(text: String, right: String, color: Color, action: Callable
 	b.focus_mode = Control.FOCUS_ALL
 	b.custom_minimum_size = Vector2(0, TAP)
 	b.add_theme_constant_override("icon_max_width", 14)
+	b.add_theme_constant_override("h_separation", 8)
 	b.add_theme_font_size_override("font_size", 15)
 	b.add_theme_stylebox_override("normal", UiTheme.box(UiTheme.ON if chosen else Color(UiTheme.BUTTON, 0.55), 8, 10))
 	b.pressed.connect(action)
@@ -128,7 +129,6 @@ static func list_row(text: String, right: String, color: Color, action: Callable
 		tag.set_anchors_and_offsets_preset(Control.PRESET_CENTER_RIGHT, Control.PRESET_MODE_MINSIZE, 10)
 		tag.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 		b.add_child(tag)
-		b.add_theme_constant_override("h_separation", 8)
 	return b
 
 
