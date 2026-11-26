@@ -523,6 +523,13 @@ func test_name_labels() -> void:
 			clear = clear and not (shown[i] as Rect2).intersects(shown[j])
 	check(clear and shown.size() >= 3, "names of close seats step outwards instead of piling up (%d of 5 shown)" % shown.size())
 	check(rects[0].position.y >= 100 + 8 + 2, "a name starts below its seat when the seat faces down")
+	var pair: Array[Dictionary] = [
+		{"anchor": Vector2(100, 100), "radius": 8.0, "dir": Vector2.DOWN, "size": Vector2(40, 14)},
+		{"anchor": Vector2(130, 100), "radius": 8.0, "dir": Vector2.DOWN, "size": Vector2(40, 14)},
+	]
+	var below := PackedVector3Array([Vector3(130, 150, 20)])
+	var slid := LabelLayout.place(pair, below, [], 2.0)
+	check(slid[1].has_area() and slid[1].position.y < 120 and slid[1].get_center().x > 130, "a name blocked further out slides sideways next to its neighbour instead")
 	var w := seated_example()
 	for view_size in [Vector2(1440, 860), Vector2(1000, 700)]:
 		var view := make_view(w, view_size)

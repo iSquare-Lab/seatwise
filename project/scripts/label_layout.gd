@@ -2,10 +2,13 @@ class_name LabelLayout
 extends RefCounted
 ## Places name labels next to their seats so that no label overlaps another label, a seat or a table.
 ## Each label goes straight out from its seat (away from the table); when that spot is taken it tries
-## a little further out, up to TIERS times, and is left out when nothing fits.
+## sliding sideways by half its width, then a little further out, up to TIERS times, and is left out
+## when nothing fits.
 ## Pure geometry in screen pixels, so the tests check it without drawing anything.
 
 const TIERS := 3
+## Sideways nudges tried at each distance, as a share of half the label's width across its direction.
+const SHIFTS := [0.0, 1.0, -1.0]
 
 
 ## items: one Dictionary per label, in priority order (the first ones get the best spots):
@@ -33,11 +36,15 @@ static func _find_spot(item: Dictionary, discs: PackedVector3Array, blocks: Arra
 	# How far the box reaches back towards the seat, measured along dir.
 	var back := absf(dir.x) * half.x + absf(dir.y) * half.y
 	var start: float = item.radius + gap + back
+	# Sideways (across dir), a name may slide by half its own extent to get out of a neighbour's way.
+	var across := Vector2(-dir.y, dir.x)
+	var slide := absf(across.x) * half.x + absf(across.y) * half.y
 	for tier in TIERS:
-		var center: Vector2 = item.anchor + dir * (start + tier * (size.y + gap))
-		var box := Rect2(center - half, size)
-		if _is_free(box, discs, blocks, placed):
-			return box
+		for shift in SHIFTS:
+			var center: Vector2 = item.anchor + dir * (start + tier * (size.y + gap)) + across * slide * shift
+			var box := Rect2(center - half, size)
+			if _is_free(box, discs, blocks, placed):
+				return box
 	return Rect2()
 
 
