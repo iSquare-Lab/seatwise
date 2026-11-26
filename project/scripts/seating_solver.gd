@@ -35,6 +35,7 @@ var _finished := false
 # Packed state, indexed by guest position in plan.guests and table position in plan.tables.
 var _n := 0
 var _tcount := 0
+var _party_count := 0
 var _group := PackedInt32Array()
 var _party := PackedInt32Array()
 var _avoid := PackedByteArray()
@@ -111,7 +112,7 @@ func total() -> float:
 	var sum := 0.0
 	for ti in _tcount:
 		sum += _costs[ti]
-	for p in _ptc.size() / maxi(1, _tcount):
+	for p in _party_count:
 		sum += _party_cost(p)
 	return sum
 
@@ -258,7 +259,8 @@ func _prepare() -> void:
 	_pairs.clear()
 	_lonely_ok = PackedByteArray()
 	_ptc = PackedInt32Array()
-	_ptc.resize(party_ids.size() * _tcount)
+	_party_count = party_ids.size()
+	_ptc.resize(_party_count * _tcount)
 	_mt = PackedInt32Array()
 	_ms = PackedInt32Array()
 	for ti in _tcount:

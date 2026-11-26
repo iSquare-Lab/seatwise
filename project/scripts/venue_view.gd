@@ -86,13 +86,18 @@ func group_color(group: String) -> Color:
 
 ## The area every table and seat covers, in cm.
 func content_rect() -> Rect2:
-	if seating == null or seating.tables.is_empty():
+	return plan_rect(seating)
+
+
+## The area every table and seat of a plan covers, in cm, with room for the names.
+static func plan_rect(plan: Seating) -> Rect2:
+	if plan == null or plan.tables.is_empty():
 		return Rect2(0, 0, 800, 600)
 	var r := Rect2()
 	var first := true
-	for t in seating.tables:
-		var size := Seating.table_size(t)
-		var corners := [Vector2(-size.x, -size.y) / 2.0, Vector2(size.x, size.y) / 2.0]
+	for t in plan.tables:
+		var top := Seating.table_size(t)
+		var corners := [-top / 2.0, top / 2.0]
 		var points := Seating.seat_positions(t)
 		var xf := Transform2D(deg_to_rad(t.rot), Vector2(t.x, t.y))
 		for c: Vector2 in corners:
@@ -114,6 +119,18 @@ func fit() -> void:
 	offset = (size / 2.0 - area.get_center() * view_scale).round()
 	_follow = true
 	queue_redraw()
+
+
+## Where a new table goes: the middle of the view when nothing stands there, otherwise right of everything.
+func spot_for_new_table(shape: String, seats: int) -> Vector2:
+	var center := to_venue(size / 2.0)
+	var probe := {"shape": shape, "seats": seats, "x": center.x, "y": center.y, "rot": 0.0}
+	var reach := Seating.table_size(probe).length() / 2.0 + 90.0
+	for t in seating.tables:
+		if Vector2(t.x, t.y).distance_to(center) < reach + Seating.table_size(t).length() / 2.0:
+			var area := content_rect()
+			return Vector2(area.end.x + 60.0, area.get_center().y).snapped(Vector2(10, 10))
+	return center.snapped(Vector2(10, 10))
 
 
 func to_screen(cm: Vector2) -> Vector2:
@@ -219,8 +236,8 @@ func _text(text: String, center: Vector2, font_size: int, color: Color, max_widt
 	draw_string(font, center + Vector2(-width / 2.0, (ascent - descent) / 2.0), shown, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
 
 
-static func initials(name: String) -> String:
-	var parts := name.strip_edges().split(" ", false)
+static func initials(full_name: String) -> String:
+	var parts := full_name.strip_edges().split(" ", false)
 	if parts.is_empty():
 		return "?"
 	if parts.size() == 1:
@@ -229,16 +246,16 @@ static func initials(name: String) -> String:
 
 
 func _table_outline(t: Dictionary) -> PackedVector2Array:
-	var size := Seating.table_size(t)
+	var top := Seating.table_size(t)
 	var xf := Transform2D(deg_to_rad(t.rot), Vector2(t.x, t.y))
 	var points := PackedVector2Array()
 	if t.shape == "round":
 		for i in 40:
 			var a := TAU * i / 40.0
-			points.append(xf * (Vector2(cos(a), sin(a)) * size.x / 2.0))
+			points.append(xf * (Vector2(cos(a), sin(a)) * top.x / 2.0))
 	else:
 		for c in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
-			points.append(xf * (c * size / 2.0))
+			points.append(xf * (c * top / 2.0))
 	return points
 
 
@@ -254,16 +271,16 @@ func _draw_table(t: Dictionary) -> void:
 	draw_polyline(closed, C_ACCENT if chosen else C_TABLE_LINE, 3.0 if chosen else 1.5, true)
 	var center := to_screen(Vector2(t.x, t.y))
 	var k := text_scale
-	var size := Seating.table_size(t) * view_scale
+	var top := Seating.table_size(t) * view_scale
 	var seated: int = t.guests.size() - t.guests.count(0)
-	var label_width := (size.x if t.shape == "round" else maxf(size.x, size.y)) * 0.9
-	if size.y >= 26.0 * k:
+	var label_width := (top.x if t.shape == "round" else maxf(top.x, top.y)) * 0.9
+	if top.y >= 26.0 * k:
 		var name_size := roundi(15 * k)
 		while name_size > roundi(10 * k) and _font().get_string_size(t.name, HORIZONTAL_ALIGNMENT_LEFT, -1, name_size).x > label_width:
 			name_size -= 1
 		_text(t.name, center - Vector2(0, 8.0 * k), name_size, C_INK, label_width)
 		_text("%d / %d" % [seated, t.seats], center + Vector2(0, 10.0 * k), roundi(12 * k), Color(C_INK, 0.6), label_width)
-	elif size.y >= 12.0:
+	elif top.y >= 12.0:
 		_text(t.name, center, roundi(11 * k), C_INK, label_width)
 	var seats := Seating.seat_positions(t)
 	for i in seats.size():
@@ -293,8 +310,8 @@ func _draw_seat_disc(p: Vector2, g: Dictionary, floating: bool, alpha: float, ta
 	var r := SEAT_RADIUS * view_scale * (1.15 if floating else 1.0)
 	var k := text_scale
 	var fill := group_color(g.group)
-	var hidden: bool = _drag == "guest" and g.id == selected_guest and not floating
-	if hidden:
+	var dragged_away: bool = _drag == "guest" and g.id == selected_guest and not floating
+	if dragged_away:
 		fill = Color(fill, 0.3)
 	if floating:
 		draw_circle(p + Vector2(2, 3), r, Color(0, 0, 0, 0.2))
@@ -374,12 +391,12 @@ func name_labels() -> Array[Dictionary]:
 ## What a seat's name label says: the first name ("First L." on the downloaded chart), the full name
 ## when chosen, and "Guest" for an unnamed +1.
 static func label_text(g: Dictionary, full: bool, for_print: bool) -> String:
-	var name: String = g.get("name", "")
+	var full_name: String = g.get("name", "")
 	if full:
-		return name
-	if name.begins_with("Guest of"):
+		return full_name
+	if full_name.begins_with("Guest of"):
 		return "Guest"
-	var parts := name.split(" ", false)
+	var parts := full_name.split(" ", false)
 	if parts.is_empty():
 		return ""
 	if for_print and parts.size() > 1:
@@ -388,9 +405,9 @@ static func label_text(g: Dictionary, full: bool, for_print: bool) -> String:
 
 
 func _rotate_handle(t: Dictionary) -> Vector2:
-	var size := Seating.table_size(t)
+	var top := Seating.table_size(t)
 	var up := Vector2(0, -1).rotated(deg_to_rad(t.rot))
-	return to_screen(Vector2(t.x, t.y) + up * (size.y / 2.0 + SEAT_RADIUS * 2.0 + 24.0))
+	return to_screen(Vector2(t.x, t.y) + up * (top.y / 2.0 + SEAT_RADIUS * 2.0 + 24.0))
 
 
 # ------------------------------------------------------------------ Hit testing

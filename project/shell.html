@@ -2,7 +2,7 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<title>Seatwise · seating plans</title>
 		<meta name="description" content="Plan who sits where at weddings, dinners and events. Paste your guest list, set who sits together or apart, and let Seatwise seat everyone. Then download the seating chart. Nothing is uploaded. Made with Godot.">
 		<meta name="theme-color" content="#13161d">
@@ -89,6 +89,19 @@ body {
 	line-height: 1.4;
 }
 
+/* Read by screen readers, not shown: the plan itself is drawn on the canvas. */
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+	border: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	#status-fill {
 		transition: none;
@@ -98,9 +111,10 @@ body {
 		$GODOT_HEAD_INCLUDE
 	</head>
 	<body>
-		<canvas id="canvas" aria-label="Seatwise seating plan">
+		<canvas id="canvas" aria-label="Seatwise seating plan" aria-describedby="summary">
 			Seatwise needs a browser that can draw on a canvas.
 		</canvas>
+		<p id="summary" class="visually-hidden" role="status" aria-live="polite"></p>
 
 		<noscript>
 			<p style="padding:24px">Seatwise needs JavaScript to run.</p>
@@ -121,6 +135,48 @@ body {
 const GODOT_CONFIG = $GODOT_CONFIG;
 const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 const engine = new Engine(GODOT_CONFIG);
+
+// What the App asks of the page (see project/scripts/file_io.gd). Callbacks come from Godot.
+window.seatwise = {
+	// Opens the file picker; done(text, fileName, problem) with problem '', 'too-big' or 'read-error'.
+	openFile: function (done, maxBytes) {
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.accept = '.json,.csv,.txt,.tsv,application/json,text/csv,text/plain';
+		input.addEventListener('change', function () {
+			const file = input.files && input.files[0];
+			if (!file) {
+				return;
+			}
+			if (file.size > maxBytes) {
+				done('', file.name, 'too-big');
+				return;
+			}
+			file.text().then(function (text) {
+				done(text, file.name, '');
+			}, function () {
+				done('', file.name, 'read-error');
+			});
+		});
+		input.click();
+	},
+	// Reads text from the clipboard; done(text, problem) with problem '' or 'not-allowed'.
+	readClipboard: function (done) {
+		if (!navigator.clipboard || !navigator.clipboard.readText) {
+			done('', 'not-allowed');
+			return;
+		}
+		navigator.clipboard.readText().then(function (text) {
+			done(text, '');
+		}, function () {
+			done('', 'not-allowed');
+		});
+	},
+	// A short summary of the plan for screen readers, e.g. "42 guests, 40 seated, 2 things to look at".
+	announce: function (text) {
+		document.getElementById('summary').textContent = text;
+	},
+};
 
 (function () {
 	const statusOverlay = document.getElementById('status');
