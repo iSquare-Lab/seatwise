@@ -4,8 +4,6 @@ extends Control
 
 const PLAN_PATH := "user://seatwise.json"
 const WIDE_MIN := 760.0
-const SOLVER_ROUNDS := 40
-const SOLVER_STEPS := 280
 
 const C_BG := Color("13161d")
 const C_PANEL := Color("1b1f28")
@@ -553,7 +551,7 @@ func _changed(save := true) -> void:
 
 
 func _refresh_status() -> void:
-	var real := seating.problems().filter(func(p: Dictionary) -> bool: return not p.text.contains("not seated yet"))
+	var real := seating.wish_problems()
 	var waiting := seating.unseated().size()
 	var good := real.is_empty() and waiting == 0 and not seating.guests.is_empty()
 	if good:
@@ -781,7 +779,7 @@ func _build_guest_inspector(g: Dictionary) -> void:
 		_changed())
 	remove.add_theme_color_override("font_color", C_BAD)
 	_piece_box.add_child(remove)
-	var own := seating.problems().filter(func(p: Dictionary) -> bool: return p.guests.has(id) and not p.text.contains("not seated yet"))
+	var own := seating.wish_problems().filter(func(p: Dictionary) -> bool: return p.guests.has(id))
 	for p: Dictionary in own:
 		_piece_box.add_child(_label(p.text, 15, C_BAD))
 
@@ -899,7 +897,7 @@ func _on_selection_changed() -> void:
 
 
 func _show_first_problem() -> void:
-	var real := seating.problems().filter(func(p: Dictionary) -> bool: return not p.text.contains("not seated yet"))
+	var real := seating.wish_problems()
 	if real.is_empty():
 		if not seating.unseated().is_empty():
 			_show_page("guests")
@@ -971,30 +969,23 @@ func _seat_everyone() -> void:
 	_seat_button.disabled = true
 	_view.busy = true
 	seating.checkpoint()
-	seating.place_unseated()
-	var rng := RandomNumberGenerator.new()
-	rng.seed = Time.get_ticks_usec()
-	# A fixed amount of work, spread over frames (about 25 ms each) so the screen stays smooth.
-	var total := SOLVER_ROUNDS * SOLVER_STEPS
-	var done := 0
-	var chunk := 500
-	while done < total:
+	# The solver's steps, spread over frames (about 25 ms of work each) so the screen stays smooth.
+	var solver := SeatingSolver.new(seating, Time.get_ticks_usec())
+	var more := true
+	while more:
 		var started := Time.get_ticks_msec()
-		while done < total and Time.get_ticks_msec() - started < 25:
-			var steps := mini(chunk, total - done)
-			seating.improve(steps, rng, lerpf(20.0, 0.0, float(done) / total))
-			done += steps
-		_seat_button.text = "Seating… %d%%" % roundi(100.0 * done / total)
+		while more and Time.get_ticks_msec() - started < 25:
+			more = solver.step()
+		_seat_button.text = "Seating… %d%%" % roundi(100.0 * solver.progress())
 		_view.refresh()
 		await get_tree().process_frame
-	seating.improve(0, rng, 0.0, true)
 	seating.drop_checkpoint_if_unchanged()
 	_seat_button.text = "Seat everyone"
 	_seat_button.disabled = false
 	_view.busy = false
 	_solving = false
 	_changed()
-	var real := seating.problems().filter(func(p: Dictionary) -> bool: return not p.text.contains("not seated yet"))
+	var real := seating.wish_problems()
 	var waiting := seating.unseated().size()
 	if waiting > 0 and seating.capacity() < seating.guests.size():
 		_show_toast("Not enough seats: %d still waiting. Add a table or more seats." % waiting, 5.0)

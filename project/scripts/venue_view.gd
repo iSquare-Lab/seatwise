@@ -66,9 +66,7 @@ func refresh() -> void:
 	if seating == null:
 		return
 	_problem_guests.clear()
-	for p in seating.problems():
-		if p.text.contains("not seated yet"):
-			continue
+	for p in seating.wish_problems():
 		for g: int in p.guests:
 			_problem_guests[g] = true
 	_group_colors.clear()
@@ -175,6 +173,9 @@ func _draw() -> void:
 		_draw_dots()
 	for t in seating.tables:
 		_draw_table(t)
+	var name_size := roundi(12 * text_scale)
+	for label in name_labels():
+		_text(label.text, (label.rect as Rect2).get_center(), name_size, C_INK)
 	if _drag == "guest" and selected_guest != -1:
 		var g := seating.get_guest(selected_guest)
 		_draw_seat_disc(_drag_point, g, true, 1.0)
@@ -198,15 +199,21 @@ func _font() -> Font:
 	return get_theme_default_font()
 
 
+## Shortens a text with a "." until it fits max_width (no limit when max_width <= 0).
+func _fit_text(text: String, font_size: int, max_width: float) -> String:
+	var font := _font()
+	if max_width <= 0.0 or font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= max_width:
+		return text
+	var shown := text
+	while shown.length() > 2 and font.get_string_size(shown + ".", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > max_width:
+		shown = shown.left(shown.length() - 1)
+	return shown.strip_edges() + "."
+
+
 func _text(text: String, center: Vector2, font_size: int, color: Color, max_width: float = -1.0) -> void:
 	var font := _font()
-	var shown := text
+	var shown := _fit_text(text, font_size, max_width)
 	var width := font.get_string_size(shown, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
-	if max_width > 0.0 and width > max_width:
-		while shown.length() > 2 and font.get_string_size(shown + ".", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > max_width:
-			shown = shown.left(shown.length() - 1)
-		shown = shown.strip_edges() + "."
-		width = font.get_string_size(shown, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
 	var ascent := font.get_ascent(font_size)
 	var descent := font.get_descent(font_size)
 	draw_string(font, center + Vector2(-width / 2.0, (ascent - descent) / 2.0), shown, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
@@ -270,7 +277,7 @@ func _draw_table(t: Dictionary) -> void:
 			if target:
 				draw_circle(p, r * 0.45, Color(C_ACCENT, 0.5))
 		else:
-			_draw_seat_disc(to_screen(seats[i]), seating.get_guest(g), false, 1.0, target, seats[i] - Vector2(t.x, t.y))
+			_draw_seat_disc(to_screen(seats[i]), seating.get_guest(g), false, 1.0, target)
 	if chosen and t.shape != "round":
 		var handle := _rotate_handle(t)
 		draw_line(center, handle, C_ACCENT, 2.0)
@@ -279,8 +286,8 @@ func _draw_table(t: Dictionary) -> void:
 		draw_arc(handle, HANDLE * 0.45, -PI * 0.9, PI * 0.55, 12, Color.WHITE, 2.0, true)
 
 
-## A seated guest: a coloured disc with initials, and their first name outside the table.
-func _draw_seat_disc(p: Vector2, g: Dictionary, floating: bool, alpha: float, target := false, outward := Vector2.ZERO) -> void:
+## A seated guest: a coloured disc with initials. Their names are drawn afterwards, see name_labels().
+func _draw_seat_disc(p: Vector2, g: Dictionary, floating: bool, alpha: float, target := false) -> void:
 	if g.is_empty():
 		return
 	var r := SEAT_RADIUS * view_scale * (1.15 if floating else 1.0)
@@ -312,16 +319,72 @@ func _draw_seat_disc(p: Vector2, g: Dictionary, floating: bool, alpha: float, ta
 		_text(initials(g.name), p, roundi(clampf(r * 0.75, 9.0, 20.0 * k)), C_INK)
 	if g.locked and not export_mode and r >= 8.0:
 		draw_circle(p + Vector2(r * 0.72, -r * 0.72), maxf(3.5, r * 0.22), C_LOCK)
-	# Names around the table when zoomed in enough to read them.
-	if not floating and r >= 13.0 * k and outward != Vector2.ZERO:
-		var dir := outward.normalized()
-		var first: String = g.name.split(" ", false)[0] if g.name.strip_edges() != "" else ""
-		var parts: PackedStringArray = g.name.split(" ", false)
-		var label: String = (first + " " + parts[-1].left(1) + ".") if export_mode and parts.size() > 1 and not g.name.begins_with("Guest of") else first
-		if g.name.begins_with("Guest of"):
-			label = "Guest"
-		var label_pos := p + dir * (r + 12.0 * k)
-		_text(label, label_pos, roundi(12 * k), C_INK, SEAT_RADIUS * view_scale * 3.4)
+
+
+## The names to draw beside the seats, when zoomed in enough to read them: [{"text", "rect"}] in screen
+## pixels. LabelLayout keeps every name clear of the seats, the tables and the other names, and leaves
+## out the ones that do not fit. The selected guest goes first and shows their full name.
+func name_labels() -> Array[Dictionary]:
+	var shown: Array[Dictionary] = []
+	var k := text_scale
+	var r := SEAT_RADIUS * view_scale
+	if seating == null or r < 13.0 * k:
+		return shown
+	var font := _font()
+	var font_size := roundi(12 * k)
+	var max_width := r * 3.4
+	var items: Array[Dictionary] = []
+	var texts: Array[String] = []
+	var discs := PackedVector3Array()
+	var blocks: Array[Rect2] = []
+	for t in seating.tables:
+		var center := to_screen(Vector2(t.x, t.y))
+		if t.shape == "round":
+			discs.append(Vector3(center.x, center.y, Seating.table_size(t).x / 2.0 * view_scale))
+		else:
+			var outline := _table_outline(t)
+			var top := Rect2(to_screen(outline[0]), Vector2.ZERO)
+			for p in outline:
+				top = top.expand(to_screen(p))
+			blocks.append(top)
+		var seats := Seating.seat_positions(t)
+		var outward := Seating.seat_outward(t)
+		for i in seats.size():
+			var p := to_screen(seats[i])
+			discs.append(Vector3(p.x, p.y, r + 1.0))
+			var id: int = t.guests[i]
+			if id == 0:
+				continue
+			var chosen := id == selected_guest and not export_mode
+			var text := _fit_text(label_text(seating.get_guest(id), chosen, export_mode), font_size, -1.0 if chosen else max_width)
+			var item := {"anchor": p, "radius": r, "dir": outward[i], "size": font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size) + Vector2(4, 0)}
+			if chosen:
+				items.push_front(item)
+				texts.push_front(text)
+			else:
+				items.append(item)
+				texts.append(text)
+	var rects := LabelLayout.place(items, discs, blocks, 3.0 * k)
+	for i in rects.size():
+		if rects[i].has_area():
+			shown.append({"text": texts[i], "rect": rects[i]})
+	return shown
+
+
+## What a seat's name label says: the first name ("First L." on the downloaded chart), the full name
+## when chosen, and "Guest" for an unnamed +1.
+static func label_text(g: Dictionary, full: bool, for_print: bool) -> String:
+	var name: String = g.get("name", "")
+	if full:
+		return name
+	if name.begins_with("Guest of"):
+		return "Guest"
+	var parts := name.split(" ", false)
+	if parts.is_empty():
+		return ""
+	if for_print and parts.size() > 1:
+		return parts[0] + " " + parts[-1].left(1) + "."
+	return parts[0]
 
 
 func _rotate_handle(t: Dictionary) -> Vector2:
